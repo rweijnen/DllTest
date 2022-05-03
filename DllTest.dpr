@@ -1,11 +1,22 @@
 program DllTest;
+{$IFOPT D-}{$WEAKLINKRTTI ON}{$ENDIF}
+{$RTTI EXPLICIT METHODS([]) PROPERTIES([]) FIELDS([])}
 
 {$APPTYPE CONSOLE}
-
 {$R *.res}
 
 uses
   Windows, System.SysUtils, JwaWinType, JwaNtStatus, JwaPsApi, JwaNative;
+
+const
+  IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE = $0040;
+  IMAGE_DLLCHARACTERISTICS_NX_COMPAT    = $0100;
+
+{$DYNAMICBASE ON} // prereq for ASLR / NX
+{$SetPEOptFlags IMAGE_DLLCHARACTERISTICS_TERMINAL_SERVER_AWARE or
+  IMAGE_DLLCHARACTERISTICS_NX_COMPAT or IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE or
+  IMAGE_FILE_RELOCS_STRIPPED}
+
 
 function GetDosPath(const NtPath: String): String;
 var
@@ -17,12 +28,15 @@ var
 begin
   RtlInitUnicodeString(@us, PChar(NtPath));
   InitializeObjectAttributes(@oa, @us, OBJ_CASE_INSENSITIVE, 0, nil);
-  nts := NtCreateFile(@hFile, SYNCHRONIZE, @oa, @iosb, nil, FILE_ATTRIBUTE_READONLY, FILE_SHARE_READ or FILE_SHARE_WRITE or FILE_SHARE_DELETE, FILE_OPEN_IF, 0, nil, 0);
+  nts := NtCreateFile(@hFile, SYNCHRONIZE, @oa, @iosb, nil,
+    FILE_ATTRIBUTE_READONLY, FILE_SHARE_READ or FILE_SHARE_WRITE or
+    FILE_SHARE_DELETE, FILE_OPEN_IF, 0, nil, 0);
   if (nts = STATUS_SUCCESS) and (hFile > 0) then
   begin
     SetLength(Result, MAX_PATH+1);
  {$WARN SYMBOL_PLATFORM OFF}
-    SetLength(Result, GetFinalPathNameByHandle(hFile, PChar(Result), Length(Result), VOLUME_NAME_DOS));
+    SetLength(Result, GetFinalPathNameByHandle(hFile, PChar(Result),
+      Length(Result), VOLUME_NAME_DOS));
  {$WARN SYMBOL_PLATFORM ON}
     Result := Result.Replace('\\?\', '');
     NtClose(hFile);
@@ -30,6 +44,8 @@ begin
   else begin
     Result := NtPath;
   end;
+
+  RtlFreeUnicodeString(@us);
 end;
 
 procedure PrintProcessModules(const hProcess: THandle);
@@ -46,8 +62,10 @@ begin
     for i := 1 to cbNeeded div SizeOf(HMODULE)-1 do
     begin
       SetLength(NtPath, MAX_PATH+1);
-      SetLength(NtPath, GetMappedFilename(hProcess, Pointer(hModules[i]), PChar(NtPath), Length(NtPath)));
-      WriteLn(GetDosPath(NtPath));
+      SetLength(NtPath, GetMappedFilename(hProcess, Pointer(hModules[i]),
+        PChar(NtPath), Length(NtPath)));
+      if Length(NtPath) > 0 then
+        WriteLn(GetDosPath(NtPath));
     end;
   end;
 end;
@@ -65,12 +83,16 @@ begin
 
     if hProcess = 0 then
     begin
-      WriteLn(Format('OpenProcess for pid %d failed with %d', [dwPid, GetLastError]));
+      WriteLn(Format('OpenProcess for pid %d failed with %d',
+        [dwPid, GetLastError]));
       Exit;
     end
+  end
+  else begin
+    hProcess := GetCurrentProcess;
   end;
 
-  PrintProcessModules(GetCurrentProcess);
+  PrintProcessModules(hProcess);
   if hProcess > 0 then
     CloseHandle(hProcess);
 end.
